@@ -1811,6 +1811,40 @@ cleanup:
 /* }}} */
 #endif
 
+/* {{{ SphinxClient::isPersistent()
+   Returns the true if instance uses a persistent connection */
+static PHP_METHOD(SphinxClient, isPersistent)
+{
+	php_sphinx_client *c;
+
+        if (zend_parse_parameters_none() == FAILURE) {
+                return;
+        }
+
+	c = (php_sphinx_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	SPHINX_INITIALIZED(c)
+
+        RETURN_BOOL(c->is_persistent);
+}
+/* }}} */
+
+/* {{{ SphinxClient::isPristine()
+   Returns the true if instance is recently created */
+static PHP_METHOD(SphinxClient, isPristine)
+{
+	php_sphinx_client *c;
+
+        if (zend_parse_parameters_none() == FAILURE) {
+                return;
+        }
+
+	c = (php_sphinx_client *)zend_object_store_get_object(getThis() TSRMLS_CC);
+	SPHINX_INITIALIZED(c)
+
+        RETURN_BOOL(c->is_pristine);
+}
+/* }}} */
+
 /* {{{ proto int SphinxClient::__sleep() */
 static PHP_METHOD(SphinxClient, __sleep)
 {
@@ -2008,6 +2042,8 @@ static zend_function_entry sphinx_client_methods[] = { /* {{{ */
 	PHP_ME(SphinxClient, status, 				arginfo_sphinxclient__param_void, ZEND_ACC_PUBLIC)	
 #endif	
 	PHP_ME(SphinxClient, updateAttributes, 		arginfo_sphinxclient_updateattributes, ZEND_ACC_PUBLIC)
+	PHP_ME(SphinxClient, isPersistent,			arginfo_sphinxclient__param_void, ZEND_ACC_PUBLIC)
+	PHP_ME(SphinxClient, isPristine,			arginfo_sphinxclient__param_void, ZEND_ACC_PUBLIC)
 	PHP_ME(SphinxClient, __sleep,				NULL, ZEND_ACC_PUBLIC|ZEND_ACC_FINAL)
 	PHP_ME(SphinxClient, __wakeup,				NULL, ZEND_ACC_PUBLIC|ZEND_ACC_FINAL)
 	{NULL, NULL, NULL}
