@@ -434,7 +434,7 @@ static PHP_METHOD(SphinxClient, __construct)
 
 		c->is_persistent = 1;
 
-		plist_key_len = spprintf(&plist_key, 0, "memcached:id=%s", persistent_id);
+		plist_key_len = spprintf(&plist_key, 0, "sphinx:id=%s", persistent_id);
 		plist_key_len += 1;
 
 		if (zend_hash_find(&EG(persistent_list), plist_key, plist_key_len, (void *)&le) == SUCCESS) {
