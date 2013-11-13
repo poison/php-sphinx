@@ -92,7 +92,11 @@ static void php_sphinx_client_obj_dtor(php_sphinx_client *c TSRMLS_DC) /* {{{ */
 {
 	if (c->obj && !c->is_persistent) {
 		php_sphinx_destroy(c->obj, 0 TSRMLS_CC);
+	} else if (c->obj && c->obj->sphinx) {
+		// Cleanup our sphinx object, if our request left it in an incompatible state we want to clean it for the next requests
+		sphinx_cleanup(c->obj->sphinx);
 	}
+
 	c->obj = NULL;
 
 	zend_object_std_dtor(&c->std TSRMLS_CC);
@@ -177,6 +181,15 @@ static HashTable *php_sphinx_client_get_properties(zval *object TSRMLS_DC) /* {{
 	MAKE_STD_ZVAL(tmp);
 	ZVAL_STRING(tmp, (char *)warning, 1);
 	zend_hash_update(c->std.properties, "warning", sizeof("warning"), (void *)&tmp, sizeof(zval *), NULL);
+
+	MAKE_STD_ZVAL(tmp);
+	ZVAL_BOOL(tmp, c->is_persistent);
+	zend_hash_update(c->std.properties, "is_persistent", sizeof("is_persistent"), (void *)&tmp, sizeof(zval *), NULL);
+
+	MAKE_STD_ZVAL(tmp);
+	ZVAL_BOOL(tmp, c->is_pristine);
+	zend_hash_update(c->std.properties, "is_pristine", sizeof("is_pristine"), (void *)&tmp, sizeof(zval *), NULL);
+
 	return c->std.properties;
 }
 /* }}} */
