@@ -39,12 +39,18 @@ static zend_object_handlers cannot_be_cloned;
 
 typedef struct _php_sphinx_client {
 	zend_object std;
+
 	struct sphinx_obj {
 		sphinx_client *sphinx;
 	} *obj;
 
 	zend_bool array_result;
+
+	zend_bool is_persistent;
+	zend_bool is_pristine;
 } php_sphinx_client;
+
+static int le_sphinx_client;
 
 #ifdef COMPILE_DL_SPHINX
 ZEND_GET_MODULE(sphinx)
@@ -72,13 +78,22 @@ static void php_sphinx_destroy(struct sphinx_obj *obj, zend_bool persistent TSRM
 }
 /* }}} */
 
-static void php_sphinx_client_obj_dtor(void *object TSRMLS_DC) /* {{{ */
+ZEND_RSRC_DTOR_FUNC(php_sphinx_dtor)
 {
-	php_sphinx_client *c = (php_sphinx_client *)object;
+	if (rsrc->ptr) {
+		struct sphinx_obj *sphinx = (struct sphinx_obj *)rsrc->ptr;
+		php_sphinx_destroy(sphinx, 1 TSRMLS_CC);
+		rsrc->ptr = NULL;
+	}
 
-	if (c->obj) {
+}
+
+static void php_sphinx_client_obj_dtor(php_sphinx_client *c TSRMLS_DC) /* {{{ */
+{
+	if (c->obj && !c->is_persistent) {
 		php_sphinx_destroy(c->obj, 0 TSRMLS_CC);
 	}
+	c->obj = NULL;
 
 	zend_object_std_dtor(&c->std TSRMLS_CC);
 	efree(c);
@@ -103,7 +118,7 @@ static zend_object_value php_sphinx_client_new(zend_class_entry *ce TSRMLS_DC) /
 #else
 	object_properties_init(&c->std, ce);
 #endif
-	retval.handle = zend_objects_store_put(c, (zend_objects_store_dtor_t)zend_objects_destroy_object, php_sphinx_client_obj_dtor, NULL TSRMLS_CC);
+	retval.handle = zend_objects_store_put(c, (zend_objects_store_dtor_t)zend_objects_destroy_object, (zend_objects_free_object_storage_t)php_sphinx_client_obj_dtor, NULL TSRMLS_CC);
 	retval.handlers = &php_sphinx_client_handlers;
 	return retval;
 }
@@ -382,28 +397,75 @@ static void php_sphinx_result_to_array(php_sphinx_client *c, sphinx_result *resu
 /* }}} */
 
 
-/* {{{ proto void SphinxClient::__construct() */
+/* {{{ proto void SphinxClient::__construct([string persistent_id]) */
 static PHP_METHOD(SphinxClient, __construct)
 {
 	zval *object = getThis();
 	struct sphinx_obj *sphinx_obj = NULL;
+
 	php_sphinx_client *c;
+	char *persistent_id = NULL, *plist_key = NULL;
+	int persistent_id_len, plist_key_len;
 
-	c = (php_sphinx_client *)zend_object_store_get_object(object TSRMLS_CC);
-
-	if (!sphinx_obj) {
-		sphinx_obj = pecalloc(1, sizeof(*sphinx_obj), 0);
-		c->obj = sphinx_obj;
-	}
-
-	if (c->obj->sphinx) {
-		/* called __construct() twice, bail out */
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "|s!", &persistent_id, &persistent_id_len) == FAILURE) {
+		ZVAL_NULL(object);
 		return;
 	}
 
-	c->obj->sphinx = sphinx_create(1 /* copy string args */);
-	
-	sphinx_set_connect_timeout(c->obj->sphinx, FG(default_socket_timeout));
+	c = (php_sphinx_client *)zend_object_store_get_object(object TSRMLS_CC);
+	c->is_pristine = 0;
+	c->is_persistent = 0;
+
+	if (persistent_id && *persistent_id) {
+		zend_rsrc_list_entry *le = NULL;
+
+		c->is_persistent = 1;
+
+		plist_key_len = spprintf(&plist_key, 0, "memcached:id=%s", persistent_id);
+		plist_key_len += 1;
+
+		if (zend_hash_find(&EG(persistent_list), plist_key, plist_key_len, (void *)&le) == SUCCESS) {
+			if (le->type == le_sphinx_client) {
+				sphinx_obj = (struct sphinx_obj *) le->ptr;
+			}
+		}
+		c->obj = sphinx_obj;
+	}
+
+	if (!sphinx_obj) {
+		sphinx_obj = pecalloc(1, sizeof(*sphinx_obj), c->is_persistent);
+		if (sphinx_obj == NULL) {
+			if (plist_key) {
+				efree(plist_key);
+			}
+			php_error_docref(NULL TSRMLS_CC, E_ERROR, "could not allocate memory for sphinx object");
+			/* not reached */
+		}
+
+		sphinx_obj->sphinx = sphinx_create(1 /* copy string args */);
+		sphinx_set_connect_timeout(sphinx_obj->sphinx, FG(default_socket_timeout));
+
+		if (c->is_persistent) {
+			zend_rsrc_list_entry le;
+			le.type = le_sphinx_client;
+			le.ptr = sphinx_obj;
+			if (zend_hash_update(&EG(persistent_list), plist_key, plist_key_len, (void *)&le, sizeof(le), NULL) == FAILURE) {
+				if (plist_key) {
+					efree(plist_key);
+				}
+				php_error_docref(NULL TSRMLS_CC, E_ERROR, "could not register persistent entry");
+				/* not reached */
+			}
+		}
+
+		c->obj = sphinx_obj;
+		c->is_pristine = 1;
+
+	}
+
+	if (plist_key) {
+		efree(plist_key);
+	}
 }
 /* }}} */
 
@@ -1960,6 +2022,8 @@ PHP_MINIT_FUNCTION(sphinx)
 
 	memcpy(&cannot_be_cloned, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
 	cannot_be_cloned.clone_obj = NULL;
+
+	le_sphinx_client = zend_register_list_destructors_ex(NULL, php_sphinx_dtor, "Sphinx persistent connection", module_number);
 
 	memcpy(&php_sphinx_client_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
 	php_sphinx_client_handlers.clone_obj = NULL;
